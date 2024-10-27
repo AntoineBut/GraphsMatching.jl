@@ -9,4 +9,4 @@ w = Dict{Edge, Float64}(Edge(1,2) => 68,
                         Edge(3,6) => 54,
                         Edge(5,6) => 11)
 m = Matching(g,w)
-solve(m,g)
+ag = solve(m,g)
