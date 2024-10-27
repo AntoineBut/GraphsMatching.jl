@@ -75,6 +75,8 @@ function minimum_weight_perfect_matching(g::Graph, w::Dict{E,U}) where {U<:Integ
     return MatchingResult(totweight, mate)
 end
 
+### blossomv start
+
 @enum Labels begin
     __minus = -1;
     __zero = 0;
@@ -86,15 +88,24 @@ mutable struct PsuedoNode{T}
     ybar::T
     tree_parent::Int;
     tree_children::Array{Int,1};
+    vertex_number::Int;
+    is_blossom::Bool;
 end
-function PsuedoNode(T::Type)
-    return PsuedoNode(__zero, T(0), -1, Array{Int,1}())
+function PsuedoNode(T::Type, i::Int)
+    return PsuedoNode(__zero, T(0), -1, Array{Int,1}(), i, false)
 end
-get_label(n::PsuedoNode) = Int(n.label)
+get_label(n::PsuedoNode) = n.label
 set_label!(n::PsuedoNode, val::Labels) = n.label = val;
 get_ybar(n::PsuedoNode) = n.ybar;
 get_parent(n::PsuedoNode) = n.tree_parent;
+set_parent!(n::PsuedoNode, v::Int) = (n.tree_parent = v)
 get_children(n::PsuedoNode) = n.tree_children;
+function add_child!(n::PsuedoNode, v::Int)
+    if !(v in n.tree_children)
+        append!(n.tree_children, v)
+    end
+    return;
+end
 
 function set_ybar(n::PsuedoNode{T}, val::T) where {T<:Number}
     n.ybar = val;
@@ -120,7 +131,7 @@ mutable struct Matching{T}
     y::Array{T,1}; #dual variable len(y)=nv(g)
 end
 function Matching(g::Graph, weights::Dict{Graphs.SimpleGraphs.SimpleEdge, T}) where {T<:Number}
-    d = Dict([i=>PsuedoNode(T) for i in 1:length(g.fadjlist)])
+    d = Dict([i=>PsuedoNode(T,i) for i in 1:length(g.fadjlist)])
     return Matching(g.fadjlist, weights, d, zeros(T, nv(g)));
 end
 function get_weight(m::Matching, verts::Tuple)
@@ -143,11 +154,27 @@ mutable struct Tree
     pq_pp::PriorityQueue{PsuedoNode, Int};
     pq_pz::PriorityQueue{PsuedoNode, Int};
     pq_m::PriorityQueue{PsuedoNode, Int};
-    #nodes::Array{PsuedoNode, 1}; #Union of pq_pp/pz/m
+    nodes::Array{PsuedoNode, 1}; #Union of pq_pp/pz/m
     current_edge;
+    del;
 end
-Tree() = Tree(PriorityQueue{PsuedoNode, Int}(), PriorityQueue{PsuedoNode, Int}(), PriorityQueue{PsuedoNode, Int}(), -Inf)
-
+Tree() = Tree(PriorityQueue{PsuedoNode, Int}(), PriorityQueue{PsuedoNode, Int}(), PriorityQueue{PsuedoNode, Int}(), Array{PsuedoNode,1}(), -Inf, 0.0)
+function add_psuedonode_to_tree!(t::Tree, ps::PsuedoNode, l::Labels)
+    set_label!(ps, l)
+    push!(t.nodes, ps)
+    # for e in boundary(ps)
+    #     bdy_node = e.src == ps ? e.dst : e.src;
+    #     if ((get_tree(ps) === get_tree(bdy_node)) &&
+    #         (get_label(ps) == get_label(bdy_node) == __plus))
+    #         # add e to tree.pq_pp
+    #     elseif (get_label(ps) == __plus && get_label(bdy_node) == __zero)
+    #         # add e to tree.pq_pz
+    #     elseif (get_label(ps) == __minus)
+    #         # add ps to tree.pq_m
+    #     end
+    # end
+    return;
+end
 mutable struct TreeEdge
     pq_pp::PriorityQueue{PsuedoNode, Int};
     pq_pm::PriorityQueue{PsuedoNode, Int};
@@ -159,9 +186,10 @@ mutable struct AuxGraph
     nodes::Array{Tree, 1};
     edges::Dict{Tuple{Tree, Tree}, TreeEdge};
     tree_pointers::Dict{Int, Union{Tree, Nothing}}; #vertex=>Tree
+    ps_nodes::Dict{Int, PsuedoNode}; #vertex num => PS
 end
 function AuxGraph()
-    return AuxGraph(Array{Tree,1}(), Dict{Tuple{Tree,Tree}, TreeEdge}(), Dict{Int, Tree}());
+    return AuxGraph(Array{Tree,1}(), Dict{Tuple{Tree,Tree}, TreeEdge}(), Dict{Int, Tree}(), Dict{Int, PsuedoNode}());
 end
 
 function get_slack(m::Matching, verts::Tuple)
@@ -172,10 +200,20 @@ function is_tight(m::Matching, verts::Tuple)
 end
 is_tight(m::Matching, e::Edge) = is_tight(m, (e.src, e.dst))
 
+function update_dual_var!(m::Matching, n::PsuedoNode)
+    m.y[n.vertex_label] += Int(get_label(n))*m.tree_pointers[n].del
+end
+function get_dual_var(m::Matching, n::PsuedoNode)
+    return m.y[n.vertex_label];
+end
+
 function get_tree(ag::AuxGraph, v::Int)
     return ag.tree_pointers[v];
 end
-function set_tree!(ag::AuxGraph, v::Int, t)
+function set_tree!(ag::AuxGraph, v::Int, t::Union{Tree, Nothing})
+    if !(t isa Nothing)
+        add_psuedonode_to_tree!(t, ag.ps_nodes[v], ag.ps_nodes[v].label)
+    end
     ag.tree_pointers[v] = t;
     return;
 end
@@ -212,11 +250,16 @@ function greedy_initialization!(m::Matching, g::Graph, aux_graph::AuxGraph)
         y[v1] += slack;
     end
     m.y = y; #todo: make better
+
+    # set tree(s)
+    set_tree!(aux_graph, 1, aux_graph.nodes[1])
 end
 
 function primal_grow(edge, m::Matching, aux_graph::AuxGraph)
-    set_label!(edge.dst) == __minus;
+    set_label!(m.nodes[edge.dst], __minus);
     set_tree!(aux_graph, edge.dst, get_tree(aux_graph, edge.src));
+    add_child!(m.nodes[edge.src], edge.dst);
+    set_parent!(m.nodes[edge.dst], edge.src);
     #flip signs along branch
 end
 function primal_augment()
@@ -229,7 +272,7 @@ function primal_update(m::Matching, aux_graph::AuxGraph)
         if (is_tight(m, edge))
             # Grow
             if (get_label(m.nodes[edge.src]) == __plus && get_label(m.nodes[edge.dst]) == __zero)
-                primal_grow(m, aux_graph);
+                primal_grow(edge, m, aux_graph);
             elseif (get_label(m.nodes[edge.src]) == get_label(m.nodes[edge.dst]) == __plus)
                 if (get_tree(aux_graph, edge.src) !== get_tree(aux_graph, edge.dst))
                     #primal_augment(m, aux_graph);
@@ -241,16 +284,111 @@ function primal_update(m::Matching, aux_graph::AuxGraph)
     end
 end
 
+function dual_grow_update(m::Matching, aux_graph::AuxGraph, tree::Tree)
+    edges = []
+    for u in tree.nodes
+        for v in m.adj[u.vertex_number]
+            if (get_label(u), get_label(m.nodes[v])) == (__plus, __zero)
+                push!(edges, Edge(u.vertex_number, v))
+            end
+        end
+    end
+    slacks = [get_slack(m, (edge.src, edge.dst)) for edge in edges];
+    return slacks;
+end
+
+function dual_augment_update(m::Matching, aux_graph::AuxGraph, tree::Tree)
+    edges = []
+    for u in tree.nodes
+        for v in m.adj[u.vertex_number]
+            if ((get_tree(aux_graph, v) !== tree) &&
+                (get_label(u), get_label(m.nodes[v])) == (__plus, __plus))
+                push!(edges, Edge(u.vertex_number, v))
+            end
+        end
+    end
+    slacks = [get_slack(m, (edge.src, edge.dst))-get_tree(aux_graph, v).del for edge in edges];
+    return slacks;
+end
+
+function dual_shrink_update(m::Matching, aux_graph::AuxGraph, tree::Tree)
+    edges = []
+    for u in tree.nodes
+        for v in m.adj[u.vertex_number]
+            if ((get_tree(aux_graph, v) === tree) &&
+                (get_label(u), get_label(m.nodes[v])) == (__plus, __plus))
+                push!(edges, Edge(u.vertex_number, v))
+            end
+        end
+    end
+    slacks = [get_slack(m, (edge.src, edge.dst))/2 for edge in edges];
+    return slacks;
+end
+
+function dual_expand_update(m::Matching, aux_graph::AuxGraph, tree::Tree)
+    slacks = []
+    for u in tree.nodes
+        if (get_label(u) == __minus && is_blossom(u))
+            append!(slacks, get_dual_var(m, u))
+        end
+    end
+    return slacks;
+end
+
+function dual_noop_update(m::Matching, aux_graph::AuxGraph, tree::Tree)
+    edges = []
+    for u in tree.nodes
+        for v in m.adj[u.vertex_number]
+            if ((get_tree(aux_graph, v) !== tree) &&
+                (get_label(u), get_label(m.nodes[v])) == (__plus, __minus))
+                push!(edges, Edge(u.vertex_number, v))
+            end
+        end
+    end
+    slacks = [get_slack(m, (edge.src, edge.dst))+get_tree(aux_graph, v).del for edge in edges];
+    return slacks;
+end
+
+function dual_update(m::Matching, aux_graph::AuxGraph)
+    for tree in aux_graph.nodes
+        tree.del = 0.0; #reset dual updates
+    end
+    for tree in aux_graph.nodes
+        grow_slacks = dual_grow_update(m, aux_graph, tree);
+        augment_slacks = dual_augment_update(m, aux_graph, tree);
+        shrink_slacks = dual_shrink_update(m, aux_graph, tree);
+        expand_slacks = dual_expand_update(m, aux_graph, tree);
+        noop_slacks = dual_noop_update(m, aux_graph, tree);
+        tree.del = minimum(cat(grow_slacks,
+                               augment_slacks,
+                               shrink_slacks,
+                               expand_slacks,
+                               noop_slacks));
+    end
+    for n in m.nodes
+        update_dual_var!(m, n)
+    end
+end
+
 function solve(m::Matching, g::Graph)
     aux_graph = AuxGraph();
     push!(aux_graph.nodes, Tree())
+    for i in 1:length(g.fadjlist)
+        aux_graph.ps_nodes[i] = PsuedoNode(typeof(m.edges.vals[1]), i)
+    end
     greedy_initialization!(m, g, aux_graph);
 
     # initialize tree pointers
     set_tree!(aux_graph, 1, aux_graph.nodes[1])
+    set_label!(m.nodes[1], __plus);
     for v in 2:length(g.fadjlist)
         set_tree!(aux_graph, v, Nothing())
+        set_label!(m.nodes[v], __zero);
     end
+    print([m.nodes[v] for v in 1:length(g.fadjlist)])
+    println(get_tree(aux_graph, 1))
 
     primal_update(m, aux_graph)
+    primal_update(m, aux_graph)
+    return aux_graph
 end
