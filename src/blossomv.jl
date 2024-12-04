@@ -187,7 +187,12 @@ function add_edge!(m::Matching{T}, edge_src, edge_dest, weight::T) where {T<:Num
 end
 
 function merge_trees(t1::Tree, t2::Tree)
-
+    t1.pq_pp = merge(t1.pq_pp, t2.pq_pp);
+    t1.pq_pz = merge(t1.pq_pz, t2.pq_pz);
+    t1.pq_m = merge(t1.pq_m, t2.pq_m);
+    t1.nodes = cat(t1.nodes, t2.nodes, dims=0);
+    t1.parent = merge(t1.parent, t2.parent);
+    t1.children = merge(t1.children, t2.children);
 end
 function add_psuedonode_to_tree!(t::Tree, ps::PsuedoNode)
     push!(t.nodes, ps)
