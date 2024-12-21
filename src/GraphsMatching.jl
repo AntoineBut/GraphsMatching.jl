@@ -12,6 +12,7 @@ using Hungarian
 
 export MatchingResult, maximum_weight_matching, maximum_weight_matching_reduction, maximum_weight_maximal_matching, minimum_weight_perfect_matching, HungarianAlgorithm, LPAlgorithm
 
+export solve, AuxGraph, Tree, Matching;
 """
     struct MatchingResult{U}
         weight::U
