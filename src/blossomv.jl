@@ -86,13 +86,26 @@ end
 # Useful types
 include("blossomV_helpers/types.jl")
 
-function add_edge!(m::Matching, e::Edge, w::U) where {U<:Real}
+function remove_edge_matching!(m::Matching, e::Edge, w::U) where {U<:Real}
+    m.edges = filter(x -> x != e, m.edges) #TODO : make a dictionary for edges, store matching as a one-hot vector
+    m.nodes = filter(x -> x != src(e) && x != dst(e), m.nodes)
+    m.mate[src(e)] = -1
+    m.mate[dst(e)] = -1
+    m.size -= 2
+    m.total_weight -= w
+end
+
+function add_edge_matching!(m::Matching, e::Edge, w::U) where {U<:Real}
     push!(m.edges, e)
     push!(m.nodes, src(e))
     push!(m.nodes, dst(e))
+    m.mate[src(e)] = dst(e)
+    m.mate[dst(e)] = src(e)
     m.size += 2
     m.total_weight += w
 end
+
+
 
 get_weight(w::Dict{E,U}, u::T, v::T) where {U<:Real,E<:Edge,T<:Integer} =
     w[Edge(min(u, v), max(u, v))]
@@ -104,13 +117,8 @@ function get_node_dual(node_id::T, forest::Forest{T,U}) where {T<:Integer,U<:Rea
     if isnothing(ps_node.tree_id)
         return ps_node.ybar
     end
-    epsilon_t = forest.trees[ps_node.tree_id]
-    y_bar = ps_node.ybar
-
-    offset_sign = 1
-    ps_node.label == Labels.__minus && (offset_sign *= -1)
-
-    return node.ybar + offset_sign * epsilon_t
+    epsilon_t = forest.trees[ps_node.tree_id].epsilon_t
+    return ps_node.ybar + epsilon_t * Int(ps_node.label)
 end
 
 function get_edge_slack(
@@ -118,14 +126,14 @@ function get_edge_slack(
     forest::Forest{T,U},
     w::Dict{E,U},
 ) where {U<:Real,E<:Edge,T<:Integer}
-    src = pseudonode_dict[edge.src]
-    dst = pseudonode_dict[edge.dst]
-    slack = get_weight(w, edge) - get_node_dual(src, forest) - get_node_dual(dst, forest)
+    slack =
+        get_weight(w, edge) - get_node_dual(edge.src, forest) -
+        get_node_dual(edge.dst, forest)
     return slack
 end
 
 function add_tree!(f::Forest, t::AlternatingTree)
-    tree_id = t.pseudo_nodes_ids[1]
+    tree_id = t.root
     f.trees[tree_id] = t
     #add_vertex!(f.aux_graph)
     return tree_id
@@ -135,12 +143,15 @@ function find_tree(f::Forest)
     #TODO : change to iterate over trees in the forest instead of random selection
     # Select a random tree to avoid getting stuck choosing the same tree
     tree = f.trees[rand(keys(f.trees))]
-    root = tree.pseudo_nodes_ids[1]
+    root = tree.root
     return tree, root
 end
 
 # Initialization functions
 include("blossomV_helpers/initialization.jl")
+
+# Primal operations
+include("blossomV_helpers/primal.jl")
 
 function primal_operation(
     tree::AlternatingTree,
@@ -171,11 +182,10 @@ function primal_operation(
             end
             edge = get_edge(v, n)
             slack = get_edge_slack(edge, forest, w)
-            if get_weight(w, edge) ==
-               get_node_dual(tree, pseudonodes_dict[v]) +
-               get_node_dual(tree, pseudonodes_dict[n])
+            if slack == 0
                 # Tight edge found
                 # dispatch to primal operation
+
 
 
                 # Add nodes to the queue

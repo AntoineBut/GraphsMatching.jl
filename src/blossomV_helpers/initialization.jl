@@ -1,6 +1,6 @@
 
 function empty_matching(n::T, u::U) where {T<:Integer,U<:Real}
-    return Matching(Set{Edge}(), Set{T}(), u, zero(T), zeros(U, n))
+    return Matching(Set{Edge}(), Set{T}(), zeros(T, n), u, zero(T))
 end
 
 """
@@ -8,21 +8,26 @@ end
 
     Create a tree with a single node 'n'.
  """
-function get_unit_tree(node::PseudoNode)
+function get_unit_tree(node::PseudoNode{T,U}) where {T<:Integer,U<:Real}
 
     backbone = SimpleDiGraph(1)
-    nodes_ids = [node.node_id]
+    psnodes_to_backbone = Dict{T,T}()
+    backbone_to_psnode = Dict{T,T}()
+    psnodes_to_backbone[node.node_id] = 1
+    backbone_to_psnode[1] = node.node_id
+
 
     t = AlternatingTree(
         backbone,
-        nodes_ids,
+        node.node_id,
+        psnodes_to_backbone,
+        backbone_to_psnode,
         0.0,
         nothing,
         PriorityQueue{PseudoNode,Int}(),
         PriorityQueue{PseudoNode,Int}(),
         PriorityQueue{PseudoNode,Int}(),
     )
-
     return t
 end
 
@@ -40,7 +45,7 @@ function make_forest(g::Graph{T}, w::Dict{E,U}) where {U<:Real,E<:Edge,T<:Intege
     # Create a dict of pseudonodes, where pseudonode_id -> PseudoNode. Initialize with all nodes in the graph
     pseudonodes_dict = Dict{T,PseudoNode{T,U}}()
     for v = 1:nv(g)
-        pseudonodes_dict[v] = PseudoNode(positive, v, Inf, nothing, false, nothing)
+        pseudonodes_dict[v] = BaseNode(positive, v, Inf, nothing, nothing)
     end
 
     # Create a dict of EdgeData, where (src, dst) -> EdgeData. Initialize with all edges in the graph
@@ -108,7 +113,7 @@ function greedy_initialization(g::Graph{T}, w::Dict{E,U}) where {U<:Real,E<:Edge
             pseudonodes_dict[dst(e)].label == positive
         )
             # Add edge to matching
-            add_edge!(match, e, get_weight(w, src(e), dst(e)))
+            add_edge_matching!(match, e, get_weight(w, src(e), dst(e)))
             #println("----- Adding edge ", e)
             # Update node labels
             pseudonodes_dict[src(e)].label = free
